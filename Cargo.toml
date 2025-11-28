@@ -7,20 +7,10 @@ edition = "2024"
 name = "pigeonvc"
 path = "src/lib.rs"
 
-[lib]
-name = "pigeonvc-client-lib"
-path = "src/lib.rs"
-crate-type = ["cdylib"]
-
 [[bin]]
 name = "pigeonvc-server"
 path = "src/server-cli/main.rs"
 
-[[bin]]
-name = "pigeonvc-client"
-path = "src/client-cli/main.rs"
-
 [dependencies]
 anyhow = "1.0.100"
-rusqlite = { version = "0.37.0", features = ["bundled"] }
 tokio = { version = "1.48.0", features = ["full"] }

@@ -102,13 +102,15 @@ impl Server {
                     .await;
             }
             PacketType::Alive => {
-                self.keepalive(addr).await;
-                let _ = self.listener.send_to(&protocol::new_alived(), addr).await;
+                if self.keepalive(addr).await {
+                    let _ = self.listener.send_to(&protocol::new_alived(), addr).await;
+                }
             }
             PacketType::Talk { audio_data } => {
-                self.keepalive(addr).await;
-                self.send_to_all(&protocol::new_talked(&audio_data), Some(addr))
+                if self.keepalive(addr).await {
+                    self.send_to_all(&protocol::new_talked(&audio_data), Some(addr))
                     .await;
+                }
             }
             _ => {}
         };
@@ -116,7 +118,7 @@ impl Server {
         Ok(())
     }
 
-    async fn keepalive(&self, addr: SocketAddr) {
+    async fn keepalive(&self, addr: SocketAddr) -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -125,7 +127,9 @@ impl Server {
 
         if let Some((_, ts)) = self.users.read().await.get(&addr) {
             ts.store(now, Ordering::Relaxed);
+            return true;
         }
+        false
     }
 
     async fn joined_users(&self) -> Vec<String> {
