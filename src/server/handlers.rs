@@ -18,9 +18,13 @@ impl Server {
             PacketType::Ping => {
                 self.listener.send_to(&protocol::new_pong(), addr).await?;
             }
-            PacketType::Rooms { offset } => {
+            PacketType::Rooms { mut offset } => {
                 let mut remaining = false;
                 let mut list = Vec::new();
+                if offset == 0 {
+                    offset = 1;
+                }
+
                 for i in offset..offset + 10 {
                     let room = match self.rooms.get(&i) {
                         Some(r) => r.value().clone(),
@@ -31,6 +35,7 @@ impl Server {
                 if self.rooms.len() as u16 >= offset + 10 {
                     remaining = true;
                 }
+
                 self.listener
                     .send_to(&protocol::new_rooms_list(remaining, list), addr)
                     .await?;
@@ -58,12 +63,17 @@ impl Server {
             }
             PacketType::Join {
                 name,
-                hwid: _,
+                hwid,
                 room_id,
             } => {
                 if self.users.contains_key(&addr) {
                     return Ok(());
                 }
+
+                if let Err(e) = (self.try_join)(hwid).await {
+                    self.disconnect_user(addr, Some(&e.to_string())).await;
+                    return Err(e);
+                };
 
                 let user = Arc::new(User {
                     id: self

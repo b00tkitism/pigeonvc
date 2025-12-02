@@ -1,6 +1,7 @@
 // src/server/model.rs
 use dashmap::DashMap;
 use std::collections::VecDeque;
+use std::pin::Pin;
 use std::{
     net::SocketAddr,
     sync::{
@@ -43,6 +44,12 @@ pub struct EventSystem {
     pub history: VecDeque<StoredEvent>,
 }
 
+type TryJoinFn = Arc<
+    dyn Fn(String) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>
+        + Send
+        + Sync,
+>;
+
 pub struct Server {
     pub(crate) listener: Arc<UdpSocket>,
     pub(crate) rooms: DashMap<u16, Arc<Room>>,
@@ -50,12 +57,18 @@ pub struct Server {
     pub(crate) connected_addrs: RwLock<Vec<SocketAddr>>,
     pub(crate) next_user_id: AtomicU64,
     pub(crate) event_system: RwLock<EventSystem>,
+    pub(crate) try_join: TryJoinFn,
 }
 
 impl Server {
-    pub async fn new(listen_addr: String) -> anyhow::Result<Self> {
-        let listener = UdpSocket::bind(listen_addr).await?;
-        let listener = Arc::new(listener);
+    pub async fn new<F, FR>(listen_addr: String, join_fn: F) -> anyhow::Result<Self>
+    where
+        F: Fn(String) -> FR + Send + Sync + 'static,
+        FR: Future<Output = anyhow::Result<()>> + Send + 'static,
+    {
+        let listener = Arc::new(UdpSocket::bind(listen_addr).await?);
+
+        let try_join: TryJoinFn = Arc::new(move |hwid: String| Box::pin(join_fn(hwid)));
 
         let server = Self {
             listener,
@@ -67,14 +80,14 @@ impl Server {
                 next_seq: 1,
                 history: VecDeque::with_capacity(MAX_EVENT_HISTORY),
             }),
+            try_join,
         };
 
         Ok(server)
     }
 
-    pub fn add_room(&self, name: &str) {
-        self.rooms
-            .insert(self.rooms.len() as u16, Server::make_room(name));
+    pub fn add_room_with_id(&self, id: u16, name: &str) {
+        self.rooms.insert(id, Self::make_room(name));
     }
 
     fn make_room(name: &str) -> Arc<Room> {
