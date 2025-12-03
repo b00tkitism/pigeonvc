@@ -70,7 +70,7 @@ impl Server {
                     return Ok(());
                 }
 
-                if let Err(e) = (self.try_join)(hwid).await {
+                if let Err(e) = (self.on_join)(hwid.clone()).await {
                     self.disconnect_user(addr, Some(&e.to_string())).await;
                     return Err(e);
                 };
@@ -80,6 +80,7 @@ impl Server {
                         .next_user_id
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                     name: name.clone(),
+                    hwid: hwid,
                     room_id: std::sync::atomic::AtomicU16::new(room_id),
                     last_seen: std::sync::atomic::AtomicU64::new(now + USER_TIMEOUT_SECS),
                     flags: 0,

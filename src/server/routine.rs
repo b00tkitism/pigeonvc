@@ -107,5 +107,7 @@ impl Server {
             event.history.clear();
             self.next_user_id.store(0, Ordering::Relaxed);
         }
+
+        (self.on_disconnect)(user_arc.hwid.clone()).await;
     }
 }

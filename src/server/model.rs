@@ -20,6 +20,7 @@ pub const MAX_CONSECUTIVE_BEHIND: u8 = 3;
 pub struct User {
     pub id: u64,
     pub name: String,
+    pub hwid: String,
     pub last_seen: AtomicU64,
     pub room_id: AtomicU16,
     pub flags: u8,
@@ -44,11 +45,14 @@ pub struct EventSystem {
     pub history: VecDeque<StoredEvent>,
 }
 
-type TryJoinFn = Arc<
+type OnJoinFn = Arc<
     dyn Fn(String) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>
         + Send
         + Sync,
 >;
+
+type OnDisconnectFn =
+    Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> + Send + Sync>;
 
 pub struct Server {
     pub(crate) listener: Arc<UdpSocket>,
@@ -57,18 +61,27 @@ pub struct Server {
     pub(crate) connected_addrs: RwLock<Vec<SocketAddr>>,
     pub(crate) next_user_id: AtomicU64,
     pub(crate) event_system: RwLock<EventSystem>,
-    pub(crate) try_join: TryJoinFn,
+    pub(crate) on_join: OnJoinFn,
+    pub(crate) on_disconnect: OnDisconnectFn,
 }
 
 impl Server {
-    pub async fn new<F, FR>(listen_addr: String, join_fn: F) -> anyhow::Result<Self>
+    pub async fn new<JF, DF, JFR, DFR>(
+        listen_addr: String,
+        on_join: JF,
+        on_disconnect: DF,
+    ) -> anyhow::Result<Self>
     where
-        F: Fn(String) -> FR + Send + Sync + 'static,
-        FR: Future<Output = anyhow::Result<()>> + Send + 'static,
+        JF: Fn(String) -> JFR + Send + Sync + 'static,
+        DF: Fn(String) -> DFR + Send + Sync + 'static,
+        JFR: Future<Output = anyhow::Result<()>> + Send + 'static,
+        DFR: Future<Output = ()> + Send + 'static,
     {
         let listener = Arc::new(UdpSocket::bind(listen_addr).await?);
 
-        let try_join: TryJoinFn = Arc::new(move |hwid: String| Box::pin(join_fn(hwid)));
+        let on_join: OnJoinFn = Arc::new(move |hwid: String| Box::pin(on_join(hwid)));
+        let on_disconnect: OnDisconnectFn =
+            Arc::new(move |hwid: String| Box::pin(on_disconnect(hwid)));
 
         let server = Self {
             listener,
@@ -80,7 +93,8 @@ impl Server {
                 next_seq: 1,
                 history: VecDeque::with_capacity(MAX_EVENT_HISTORY),
             }),
-            try_join,
+            on_join,
+            on_disconnect,
         };
 
         Ok(server)

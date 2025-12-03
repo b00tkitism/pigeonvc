@@ -1,12 +1,15 @@
 use std::sync::Arc;
 
 use anyhow::Context;
+use dashmap::DashMap;
 use pigeonvc2::server::Server;
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqliteConnectOptions;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let state = Arc::new(DashMap::new());
+
     let db = SqlitePool::connect_with(
         SqliteConnectOptions::new()
             .filename("pigeonvc.db")
@@ -64,9 +67,14 @@ async fn main() -> anyhow::Result<()> {
 
     let join_fn = {
         let db = db.clone();
+        let state = state.clone();
         move |hwid: String| {
             let db = db.clone();
+            let state = state.clone();
             async move {
+                if let Some(_) = state.get(&hwid) {
+                    anyhow::bail!("user with hwid `{hwid}` is already joined");
+                }
                 if let Some((banned,)) =
                     sqlx::query_as::<_, (i64,)>("SELECT banned FROM users WHERE hwid = ?")
                         .bind(&hwid)
@@ -91,14 +99,26 @@ async fn main() -> anyhow::Result<()> {
                         .context("failed to insert new user")?;
                 }
 
+                state.insert(hwid.clone(), 1);
                 println!("join accepted for hwid = {hwid}");
                 Ok(())
             }
         }
     };
 
+    let disconnect_fn = {
+        let state = state.clone();
+        move |hwid: String| {
+            let state = state.clone();
+            async move {
+                state.remove(&hwid);
+                println!("{hwid} is leaving");
+            }
+        }
+    };
+
     let srv = Arc::new(
-        Server::new("0.0.0.0:8897".to_string(), join_fn)
+        Server::new("0.0.0.0:8897".to_string(), join_fn, disconnect_fn)
             .await
             .context("failed to start UDP server")?,
     );
